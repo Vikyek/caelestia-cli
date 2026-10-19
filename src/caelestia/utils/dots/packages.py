@@ -180,10 +180,18 @@ class ArchInstaller(PackageInstaller):
         if not packages:
             return []
 
-        cmd = [self.helper, "-S", "--needed", *self.flags]
-        if not explicit:
-            cmd.append("--asdeps")  # Set install reason to dep (does not affect already installed packages)
-        _try_run(cmd + packages, f"failed to install packages: {', '.join(packages)}")
+        # Skip packages already satisfied via pacman Provides (handles -git forks, etc.)
+        # e.g. thunar-admin-git provides thunar, so `caelestia install thunar` must not re-install
+        already_satisfied = [p for p in packages if self.is_installed(p)]
+        to_install = [p for p in packages if p not in already_satisfied]
+        if already_satisfied:
+            info(f"Already satisfied, skipping: {', '.join(already_satisfied)}")
+
+        if to_install:
+            cmd = [self.helper, "-S", "--needed", *self.flags]
+            if not explicit:
+                cmd.append("--asdeps")  # Set install reason to dep (does not affect already installed packages)
+            _try_run(cmd + to_install, f"failed to install packages: {', '.join(to_install)}")
 
         # Resolve virtual/`provides` names (e.g. awk -> gawk)
         resolved = [self._installed_name(pkg) for pkg in packages]
@@ -258,7 +266,11 @@ class ArchInstaller(PackageInstaller):
 
     def installed_version(self, package: str) -> str | None:
         query = self.query(package)
-        return query[1] if query and query[0] == package else None  # Name is checked exactly
+        # `pacman -Q <virtual>` resolves Provides and returns the real package + version.
+        # Drop the exact-name guard: if a query succeeds, the dependency is satisfied
+        # (e.g. thunar-admin-git provides thunar, so query("thunar") returns its version).
+        return query[1] if query else None
+
 
     def needs_rebuild(self, directory: Path, packages: list[str]) -> bool:
         built = _srcinfo_version(_read_srcinfo(directory))
