@@ -24,13 +24,47 @@ from caelestia.utils.paths import (
 from caelestia.utils.scheme import Scheme, get_scheme
 from caelestia.utils.theme import apply_colours
 
-
-def is_valid_image(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".gif"]
+IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".gif"]
+VIDEO_EXTENSIONS = [".mp4", ".mkv", ".webm", ".mov", ".avi"]
 
 
 def is_video(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in [".mp4", ".webm", ".mkv"]
+    return path.suffix.lower() in VIDEO_EXTENSIONS
+
+
+def is_animated(path: Path) -> bool:
+    return path.suffix.lower() == ".gif" or is_video(path)
+
+
+def is_valid_wallpaper(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
+
+
+def get_size(wall: Path) -> tuple[int, int]:
+    if is_video(wall):
+        out = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height:stream_side_data=rotation",
+                "-of",
+                "default=nw=1:nk=1",
+                wall,
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        width, height, *rotation = map(int, out.split())
+        if rotation and rotation[0] % 180 != 0:
+            return height, width
+        return width, height
+
+    with Image.open(wall) as img:
+        return img.size
 
 
 def djb2_hash(s: str) -> str:
@@ -71,9 +105,11 @@ def extract_thumbnail(video_path: Path, output_path: Path):
 
 
 def check_wall(wall: Path, filter_size: tuple[int, int], threshold: float) -> bool:
-    with Image.open(wall) as img:
-        width, height = img.size
-        return width >= filter_size[0] * threshold and height >= filter_size[1] * threshold
+    try:
+        width, height = get_size(wall)
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return False
+    return width >= filter_size[0] * threshold and height >= filter_size[1] * threshold
 
 
 def get_wallpaper() -> str | None:
@@ -88,7 +124,7 @@ def get_wallpapers(args: Namespace) -> list[Path]:
     if not directory.is_dir():
         return []
 
-    walls = [f for f in directory.rglob("*") if is_valid_image(f)]
+    walls = [f for f in directory.rglob("*") if is_valid_wallpaper(f)]
 
     if args.no_filter:
         return walls
@@ -285,7 +321,7 @@ def extract_all_video_thumbs() -> None:
         except Exception as e:
             print(f"ERROR: {e}")
 
-    video_extensions = {".mp4", ".webm", ".mkv"}
+    video_extensions = set(VIDEO_EXTENSIONS)
     videos_to_process = []
 
     for root_dir, _, files in os.walk(wallpapers_dir):
@@ -303,7 +339,7 @@ def set_wallpaper(wall: Path, no_smart: bool) -> None:
     # Make path absolute
     wall = Path(wall).resolve()
 
-    if not is_valid_image(wall) and not is_video(wall):
+    if not is_valid_wallpaper(wall):
         raise ValueError(f'"{wall}" is not a valid image or video')
 
     if wall.suffix.lower() == ".gif":
