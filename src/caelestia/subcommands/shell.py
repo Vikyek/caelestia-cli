@@ -1,8 +1,9 @@
 import json
 import os
 import signal
-import subprocess
 import time
+from pathlib import Path
+import subprocess
 from argparse import Namespace
 
 from caelestia.utils.io import fatal, warn
@@ -34,6 +35,16 @@ class Command:
             # Send a message
             self.message(*self.args.message)
         else:
+            # Hardware Decoder Injection
+            try:
+                decoder_file = Path(os.path.expanduser("~/.cache/caelestia/hwDecoder.txt"))
+                if decoder_file.exists():
+                    decoder = decoder_file.read_text().strip()
+                    if decoder and decoder.lower() != "auto":
+                        os.environ["QT_FFMPEG_DECODING_HW_DEVICE_TYPES"] = decoder
+            except Exception:
+                pass
+
             # Start the shell
             self.start_shell()
 
